@@ -1,0 +1,83 @@
+.TH gencom 1 "14 December 1998"
+.IX gencom
+.SH NAME
+gencom - creates a C++ header file with the definition of a class which reads
+the command line of your program.
+.SH SYNOPSIS
+.B gencom
+.I file
+|
+.I --version
+[
+.B >
+]
+.I output-file
+
+.SH DESCRIPTION 
+The input 
+.I file 
+contains the declarations, default values and documentations of
+the desired variables you want to read from the commandline of your program.
+The header file which contains the code is produced on standard output.
+
+Before the parsing of the input 
+.I file 
+starts, it is filtered with the
+preprocessor of 
+.B gcc
+, enabling you to use commence and macro-definitions in this
+input 
+.I file.
+
+.SH OPTIONS
+.TP
+.B --version
+will show the version.
+
+.SH EXAMPLES
+An example input 
+.I file 
+could look like this:
+
+ //  Emacs, use -*-C++-*- mode for this file
+ //  command line options for the ising program
+ //  december 1998 - Michiel Meeuwissen
+
+ float K          = 0.22     "temperature"
+ int   size       = 10   s   "size"
+ int   iterations = 100  i   "number of iterations"
+ int   seed                  "random seed"
+
+In which you see the variable declarations, their default values, an
+alternative command line name and a documentation.
+
+If the main program of the ising program would look like:
+
+ #include "cmdline.h" 
+ 
+ int main(int argc, char *argv[])
+ {
+     c_cmdln cmdl(argc, argv,
+     "Ising programma -- Michiel Meeuwissen 1998"); 
+ 
+ }
+
+In which you then have the variables cmdl.K, cmdl.size etc. And the user of
+your program can specify them:
+
+	
+  ising K0.30 seed100 i200 
+
+.SH BUGS
+I don't know of any yet.
+.SH SEE ALSO
+gcc(1), g++(1)
+.SH AUTHOR
+Copyright (C) 1998,1999 by Michiel Meeuwissen.
+.\" Permission to use, copy, modify, and distribute this software and its
+.\" documentation for any purpose and without fee is hereby granted, provided
+.\" that the above copyright notice appear in all copies and that both that
+.\" copyright notice and this permission notice appear in supporting
+.\" documentation.  This software is provided "as is" without express or
+.\" implied warranty.
+

@@ -1,0 +1,405 @@
+#!/usr/bin/perl -w
+# change this first line if perl is elsewhere (try 'which perl').
+
+# version 0.50: multiple classes
+# version 0.35: useable version
+#
+
+
+$version = "0.50";         #version of this program.
+
+$inputfile  = $ARGV[0];
+$classnamestandard  = "c_cmdln";
+$classname = $classnamestandard;
+$helpoption = "h";       #also ? would be nice, but some shell don't like that.
+$CC         = "gcc";     #only used as precompiler
+
+if(!$ARGV[0])
+{
+    print STDERR "No inputfile specified\n";
+    exit 100;
+}
+
+#this is my first perl program. I like to keep it simple
+# show version information
+if($ARGV[0] =~  "--version") 
+{
+    print "gencom -- version $version,  Michiel Meeuwissen, january 1999\n";
+    exit 0;
+}
+
+ 
+#if($ARGV[1]) { $out= 
+
+#possible C types I store in an hash:
+#There are 2 ways to define a type
+#- by defining it's C-format specifier to read it in with sscanf
+#- by giving a piece of C-code wich reads the variable VAR out of the string gc_string
+%types = ( "float"  => { "format" => '%f'},
+	   "int"    => { "format" => '%d'},
+           "double" => { "format" => '%lf'},
+	   "char"   => { "format" => '%c'},
+           "bool"   => { "code"   => 'VAR = gc_string[0] == \'+\' ? true : false;'},
+           "floatt" => { "format" => '%\"FF\"'}
+	 );
+
+#we start with no errors
+$error=0;
+
+#read in this file (preprocessed, so you can use #define and C-like commence in it.):
+#the line beginning with # is filtered out the output of the preprocessor
+@variablesr = `$CC -E -xc++ $inputfile | awk '\$1 != "#" {print}'`;
+
+$vi = 0;
+$elements = 0;                
+$extralines = 0;
+$extraclasses = 0;
+$extraclassnames = "";
+
+&writeheader;
+
+for($ii = 0; $ii < @variablesr; $ii++)
+{
+    @a = split //,$variablesr[$ii];
+    if($a[0] =~ '\*') 
+    {	
+	#print @variables; # collected until now.
+	if($elements > 0 ) {&writeclass; }
+	else {
+	    if($extraclasses>0) # this is only an error if it's not the first.
+	    {
+		print STDERR $inputfile,":",$ii,": empty class\n";
+		$error = 20;
+	    }
+	}
+	@hulpje = split /[\*\s]+/, $variablesr[$ii];
+	$classname = $hulpje[1];
+
+	#check if classname already exist
+	if($classes{$classname})
+	{
+	       print STDERR $inputfile,":",$ii+1,": redefined class $classname\n";
+	       $error = 21;
+	}
+ 	if(@hulpje > 2){ $classopt  = $hulpje[2];}
+	else           { $classopt  = $hulpje[1];}
+
+        #check if classoption already exist
+	foreach $class (keys %classes)
+	{
+	    if($classes{$class} eq $classopt)
+	    {
+	       print STDERR $inputfile,":",$ii+1,": redefined class-option $classopt\n";
+	       $error = 22;
+	    }
+	}
+	$classes{$classname} = $classopt;
+	#print STDERR "opt:",$classopt, "\n";
+	#print "classname: $classname";	
+	@variables = ();   # empty it.
+	$elements = 0;
+	$vi = 0;	
+	$ii++;
+	$extralines = $ii; # to make it possible to indicate the line of the error
+    }
+    $variables[$vi++] = $variablesr[$ii]; # we copy the part belonging to one class to $variables
+    @a = split /\s+/,$variablesr[$ii]; # check if it's not an empty line.
+    if(@a>1) {$elements++;}
+}
+
+if($elements > 0 ) {&writeclass};
+
+if($extraclasses > 1) # I'm not sure this works.
+{
+    print STDERR "extra classes";
+    $classname = $classnamestandard;
+    $enames = substr($extraclassnames,1);
+    print
+    "class $classname\n".
+    "{\n".
+    " static  char * info;\n".
+    " public:\n".
+    "  static int read(int argc, char * argv[], char * _info = NULL)\n".
+    "     { \n".
+    "        info = _info;\n".
+    "        if(argc == 1) return 0;\n"; #no arguments, use default
+    foreach $class (keys %classes)
+    {
+       $classn = $classes{$class};	
+       print
+	   "        if(!strcmp(\"$classn\", argv[1])) return $class;\n";
+   	
+
+    }
+    print
+    "        if(argv[1][0] == 'h')\n".
+    "          {\n".
+    "           if(info) printf(\"%s\\n\",info);\n".
+    "          }\n".
+    "        return -1;\n".
+    "     }\n\n".
+    "  friend ostream& operator<<(ostream&, const $classname&);\n".
+    "  enum {$enames};\n".
+    "};\n".
+    "char * $classname\:\:info = NULL;\n";
+}
+
+&writefooter;
+
+#program finished, determine which error-code to return.
+exit $error;
+
+
+sub writeclasstest
+{
+    print "classname: $classname\n";  
+    for($i = 0; $i <  @variables; $i++)
+    {
+	print $variables[$i];
+    }
+    
+}
+
+sub writeclass
+{
+    $extraclasses++; 
+    $extraclassnames .= ",".$classname;
+
+	    
+    local ( $i, $doc, %vars, @a );
+#translate @variables to the hash of hashes $vars
+for($i = 0; $i <  @variables; $i++)
+{
+    $_ = $variables[$i];
+    #first, we get rid of trailing documentations and store it in $doc.
+    @a= split /\"/;
+    $doc = $a[1];
+    $_ = $a[0];
+    
+    #find the type and name of the variables:
+    #split this line in records seperated by (one '=' and spaces) or spaces.
+    @a = split /\s*=\s*|\s+/;
+    
+    if(@a == 0) { next; } #this was an empty line, ignore it.
+ 
+    if(@a < 2) # this is an error, at least name and type should be indicated  
+     { 
+	 print STDERR $inputfile,":",$i+1 + $extralines," could not find type and name on this input line\n";
+         $error = 1;
+	 next; 
+     }
+    #field 0 should represent a known type
+    #complain if not so.
+    if(! $types{$a[0]}) 
+    { 
+	print STDERR $inputfile,":",$i+1 + $extralines,": type ",$a[0], " is unknown\n"; 
+	$error = 2;
+	next;
+    } 
+
+    if($vars{$a[1]}) # this variable did already exist
+    {
+	print STDERR $inputfile,":",$i+1 + $extralines,": variable ",$a[1], " already defined\n";
+	$error = 3;
+	next;
+    }
+    if(/=/){ $value = $a[2];} # if there was an '=' we can fill the defaultvalue, otherwise 0
+    else   { $value = 0;}
+
+    # we have the '=' part, so we remove it (we don't need it anymore).
+    s/(\s*=\s*[^\s]*\s*)|(\".*\"\s*$)/ /g; #remove = <number> and "   "    
+       			  
+    # we find if there was an alternative 'option form' defined.
+    @a = split /\s+/;
+    
+    if(@a > 3) # too many fields, complain
+     {
+	 print STDERR $inputfile,":",$i+1 + $extralines,": too many fields.\n";
+	 $error = 4;
+	 next;
+     }
+    
+    if($a[2]) { $option = $a[2]; } else { $option = $a[1];}  				      
+        
+    # check if the found option clashes with earlier defined options:
+    foreach $var (sort keys %vars)
+    {	 
+	if($vars{$var}{"optionform"} =~ "^$option" || $option =~ "^$vars{$var}{'optionform'}")
+	{
+	    print STDERR $inputfile,":",$i+1 + $extralines,": option \'",$option, "\' clashed with already defined option \'",$vars{$var}{"optionform"},"\'.\n";
+	    $error = 5;
+	    next;
+	}
+    }		      	
+    #if we make it till here, then we know everything we want to know about this record:
+    $vars{$a[1]} = { type => $a[0], optionform => $option, value => $value, doc => $doc, sortv => $i};
+	    
+}
+
+#debugging help:
+ # print the whole thing  somewhat sorted
+ #foreach $var ( sort keys %vars ) {
+ #    print "$var: { ";
+ #    for $info ( sort keys %{ $vars{$var} } ) {
+ #        print "$info=$vars{$var}{$info} ";
+ #    }
+ #    print "}\n";
+ #}
+
+#exit 0;
+
+
+#produce the h-file
+#&writeheader;
+
+#define the class:
+print
+    "#include <stdio.h>\n\n".
+    "class $classname\n".
+    "{\n".
+    " char * info;\n".
+    " public:\n".
+    "  $classname(int = 0, char * argv[] = NULL, char * _info = NULL);\n\n".
+    "  friend ostream& operator<<(ostream&, const $classname&);\n";
+    foreach $var (sort { $vars{$a}{"sortv"} <=> $vars{$b}{"sortv"} }  keys %vars) #sorted in the original order
+    {
+	print "  ",$vars{$var}{"type"},"  ",$var,";\n";
+    }
+print "};\n\n";
+
+# make the constructor
+print
+    "$classname\:\:$classname(int argc, char *argv[], char * _info)\n".
+    "{\n".
+    "   info = _info;\n".
+    "  char * gc_string;\n";
+# first, the variables get their default values
+    foreach $var (sort { $vars{$a}{"sortv"} <=> $vars{$b}{"sortv"} }  keys %vars)
+    {
+	if($types{$vars{$var}{'type'}}{'code'})
+	   {
+	       $value = $vars{$var}{"value"}; 
+	       print "   gc_string = \"$value\";\n";
+	       $_ = $types{$vars{$var}{'type'}}{'code'};
+	       s/VAR/$var/g;
+	       print "   ",$_,"\n";
+	       	   
+	   }
+	else
+	   {
+	       $value = $vars{$var}{"value"}; 
+	       print "   ",$var," = ",$value,";\n";
+	   }
+
+    } 
+# and secondly, the variables are read from the commandline
+$maxlen = 0;
+if($extraclasses)
+{
+    print    
+    "  for(int i = 2; i<argc; i++)\n";
+}
+else
+{
+    print    
+    "  for(int i = 1; i<argc; i++)\n";
+}
+    print
+    "     {\n".
+    "      int recognized = 0;\n";
+    foreach $var (sort { $vars{$a}{"sortv"} <=> $vars{$b}{"sortv"} }  keys %vars)
+    {
+     $option = $vars{$var}{"optionform"}; 
+     $type   = $vars{$var}{"type"}; 
+     $len = length($option);
+     #we determine the maximum option length because we need it later.
+     if($len > $maxlen) {$maxlen = $len;}
+     
+     #every option starts with deciding which it is:
+     print "      if(!memcmp(\"$option\",argv[i], $len))";
+
+     if($types{$type}{"format"})
+	{
+	    $format = $types{$type}{"format"};	    
+            print "{ sscanf(argv[i] + $len, \"$format\", &$var); recognized++;}\n";
+	}  
+     if($types{$type}{"code"})
+        {	   
+	    $_ = $types{$type}{'code'};
+	    s/VAR/$var/;
+	    print "{ gc_string = argv[i] + $len; ",$_," recognized++;}\n";	    
+        }
+    }			          
+#build also the help-option
+print
+    "      if(argv[i][0] == '$helpoption')\n".
+    "        {\n".
+    "        recognized++;\n".
+    "        if(info) printf(\"%s\\n\",info);\n".
+    "        printf(\"use:\\n    %s [options] \\n\", argv[0]);\n".
+    "        printf(\"options:\\n\"); \n";    
+    
+    foreach $var (sort { $vars{$a}{"sortv"} <=> $vars{$b}{"sortv"} }  keys %vars)
+    {
+    $option = $vars{$var}{"optionform"}; 
+    $len = length($option);
+    $value  = $vars{$var}{"value"}; 
+    $docs    = $vars{$var}{"doc"}; 
+    print "        printf(\" $option???";
+    for($i=0; $i<($maxlen - $len);$i++) { print " ";} #nice on one collumn
+    print " :($value) ";
+    # it is allowed to have more then one line of documentation per option (split by \n)
+    # the following makes it that the next lines are indented like the first.
+    #$_ = $doc;
+    @doc = split /\\n/, $docs;
+    print $doc[0];
+    for($i=1; $i < @doc; $i++)
+    { 
+	print "\\n\"\n               \"";
+	for($j=0; $j < $maxlen; $j++) { print " ";} #nice on one collumn
+	print "      ",$doc[$i];
+    }	
+    print "\\n\");\n";
+    }
+print
+    "        exit(0);\n".
+    "        }\n".    
+    "      if(!recognized) { printf(\"Unrecognized commandline option %s (try '$helpoption')\\n\", argv[i]);exit(1);}\n".	 
+# if this program is bugless, then the following will not occurr:
+    "      if(recognized > 1) { printf(\"**Dubious commandline option %s (this is a bug in sourcefile $inputfile)**\\n\", argv[i]);exit(1);}\n".	 
+    "     }\n".
+    "}\n\n";
+
+# code for generating output
+print 
+    " ostream& operator<<(ostream& os, const $classname& s)\n".
+    "   {\n".
+    "    os\n";
+    foreach $var (sort { $vars{$a}{"sortv"} <=> $vars{$b}{"sortv"} }  keys %vars)
+    {
+    print "    << \"$var = \" << s.$var << endl\n";
+    }
+print
+    "    ;\n".
+    "    return os;\n".
+    "   }\n"; 
+} # sub writeclass
+
+#testing how to make a subroutine..
+sub writeheader
+{
+local $now_string = gmtime;
+$_ = $inputfile;
+s/\./_/g;
+$defstring = "__" . $_ ."__";
+print "/*  automatic code produced by gencom $version on $now_string\n\n".
+      "    inputfile: <$inputfile>\n".
+      " */\n\n".
+      "#ifndef $defstring\n".
+      "#define $defstring\n";
+}
+
+sub writefooter
+{
+print "#endif // $defstring\n";
+}
